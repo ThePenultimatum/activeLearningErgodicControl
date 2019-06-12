@@ -1,88 +1,105 @@
 clear;
 
 
-%%%%
+%%%% Globals
 global T x0 epsilon resolution dt sigma mu L K rowres colres gammaKs R qRegularization controls ergodicMeasure;
-global phik trajectory deriv phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals littlea littleb allHs;
+global phik trajectory phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals littlea littleb allHs;
 %%%%
 
-i = 0;
+%%%% Inits for all parts
 T = 10;
-%x0 = [0; 1];
-x0 = [1; 2];
-u1_init = 0.001;
-u2_init = 0.001;
-initCondsVect = [1; 2; 1; 0.1];
+x1_init = 0.1;
+x2_init = 0.1;
+x0 = [x1_init; x2_init];
+u1_init = 0.01;
+u2_init = 0.01;
+initCondsVect = [x1_init; x1_init; u1_init; u2_init];
+%%%%
 
-
-allHs = [];
-    
-for xk=0:K
-    for yk=0:K
-        ks = [xk; yk];
-        allHs(xk+1,yk+1) = getHK(ks);
-    end
-end
-
-
+%%%% Timing inits
 resolution = 1;
 dt = 1/resolution;
 N = T/dt;
+%%%%
+
+%%%% Inits for ERGODICITY calculations
+K = 10;
+allHs = hsInit();
+L = 3;%2;
+qRegularization = 1;
+rowres = 10;
+colres = 10;
+gammaKs = [];
+for ki=0:K
+    for kj=0:K
+        newone = getGammaKiKj(ki, kj);
+        gammaKs(ki+1,kj+1) = newone;
+    end
+end
+%%% ERGODICITY prior normal distribution inits
+sigma = [0.01 0; 0 0.01];
+mu = [0.15, 0.17];%[1; 1];%0;
+phix = phi();
+%%%
+ergodicMeasure = getErgodicMeasure()
+%%%%
+
+%%%% Inits for ILQR
+R = [0.1 0; 0 0.1];
+Q = [10 0; 0 1];
+P1 = [1 0; 0 1];
+Amats = [];
+Bmats = [];
+epsilon = 0.1;
+%%%%
+
+%%%% Controls, trajectory, desired trajectory, and perturbation inits
 controls = [];
 trajectory = [];
 timevals = [];
-xdest = [];
 zs = [];
 vs = [];
 z0 = [0; 0];
 v0 = [0; 0];
 prev = x0;
+controls = [controls; u1_init, u2_init];
+trajectory = [trajectory; prev(1), prev(2)];
+xdest = transpose(trajectory);
+zs = [zs; 0, 0];
+vs = [vs; 0, 0];
+timevals(1) = 0;
 for i=1:(T/dt)
     controls = [controls; u1_init, u2_init];
     trajectory = [trajectory; prev(1) + dt * u1_init, prev(2) + dt * u2_init];
     prev = [prev(1) + dt * u1_init, prev(2) + dt * u2_init];
     zs = [zs; 0, 0];
     vs = [vs; 0, 0];
-    timevals(i) = dt * i;
+    timevals(i+1) = dt * i;
 end
-xdest = transpose(trajectory);
-epsilon = 0.1;
-R = [1 0; 0 1];
-Q = [1 0; 0 1];
-P1 = [1 0; 0 1];
-Amats = [];
-Bmats = [];
-sigma = [1 0; 0 1];
-mu = 1;%[1; 1];%0;
-L = 2;%2;
-qRegularization = 1;
-K = 10;
-rowres = 10;
-colres = 10;
-gammaKs = [];
-for ki=0:K
-    for kj=0:K
-        %newone = getGammaK(k);
-        %gammaKs = [gammaKs; newone];
-        newone = getGammaKiKj(ki, kj);
-        gammaKs(ki+1,kj+1) = newone;
-    end
-end
-phix = phi();
-ergodicMeasure = getErgodicMeasure()
+%%%%
+
+%%%% ILQR cost and derivative inits
 cost = costJ();
-ergodicMeasure = getErgodicMeasure();
-deriv = 10;%derivOfCost() %10; % initialize dj(eta_i) dot zeta_i
+normControlPerturbations = 9999999;
+maxILQRIters = 3;
+%%% Armijo inits for ILQR
+jnew = 9999999;
+jinit = cost;
+beta  = 0.7;
 alpha = 0.4;
-beta = 0.7;
+armijocount = 0;
+gamma = 0.01; %%%% default small step instead of Armijo
+%%%
+%%%%
 
 %%%% Main loop
 
 iters = 0;
+ergodicities = [];
 
-while ((norm(deriv)) > epsilon) & iters < 1000
+while (normControlPerturbations > epsilon) & iters < 0%maxILQRIters
     
-    
+    %%%% Calculate descent direction
     %%% calculate  A and B matrices
     for i=1:(T/dt)
       At = Amat(trajectory, controls, i);
@@ -90,24 +107,24 @@ while ((norm(deriv)) > epsilon) & iters < 1000
       Bt = Bmat(trajectory, controls, i);
       Bmats(:,:,i) = Bt;
     end
+    %%% calculate a(t) and b(t)
     littlea = transpose(getLittlea());
+    littleb = transpose(controls * R);
     %%% Calculate P
-    [TP, P] = ode45(@(t,P)solvepval(t, P, Q, R, Amats, Bmats, trajectory, controls), linspace(T,0,T/dt), P1);
+    [TP, P] = ode45(@(t,P)solvepval(t, P, Q, R, Amats, Bmats, flip(trajectory), flip(controls)), linspace(T,0,T/dt), P1);
     tmpP = P((T/dt),:);
-    
     %%% Calculate r0 and r
-    r0 = [tmpP(1,1:2); tmpP(1,3:4)] * z0;%[tmpP(1,1:3); tmpP(1,4:6); tmpP(1, 7:9)] * z0; %P1 * (trajectory(:,N) - xdest(:,N));%[tmpP(1,1:3); tmpP(1,4:6); tmpP(1, 7:9)] * z0;
-    
-    [Tr, r] = ode45(@(t,r)solverval(t, r, P, R, Q, Amats, Bmats, trajectory, controls), linspace(T,0,T/dt), r0);
+    r0 = [tmpP(1,1:2); tmpP(1,3:4)] * z0;
+    [Tr, r] = ode45(@(t,r)solverval(t, r, P, R, Q, Amats, Bmats, flip(trajectory), flip(controls)), linspace(T,0,T/dt), r0);
     
     %%% Calculate z
-    x0valForZdot = [0; 0;];% 0];%[trajectory(1,1); trajectory(2,1); trajectory(3,1)];
+    x0valForZdot = [0; 0];
     [Tz, z] = ode45(@(t,z)getZdot(t, z, flip(P), R, Q, Amats, Bmats, trajectory, controls, flip(r)), linspace(0,T,T/dt), x0valForZdot);
-    zs = z;
+    zs = [z; 0, 0];
     
     %%% Calculate v
-    v = getV(R, Amats, Bmats, flip(P), z, flip(r), trajectory, controls, Q);
-    vs = v;
+    v = getV(R, Amats, Bmats, flip(P), zs, flip(r), trajectory, controls, Q);
+    vs = [v; 0, 0];
     
     %%% armijo
     
@@ -129,13 +146,16 @@ while ((norm(deriv)) > epsilon) & iters < 1000
     
     %%%%%%%
     %temporary
-    gamma = 0.01;
-    oldControls = controls + transpose(v) * gamma;
+    gamma = 0.001;
+    oldControls = controls + vs * gamma;
     oldTraj = [];
     prev = x0;
+    oldTraj = [oldTraj; prev(1), prev(2)];
     for i=1:(T/dt)
-        oldTraj = [oldTraj; prev(1) + dt * oldControls(i,1), prev(2) + dt * oldControls(i,2)];
-        prev = [prev(1) + dt * u1_init, prev(2) + dt * u2_init];
+        newx1 = prev(1) + dt * oldControls(i,1);
+        newx2 = prev(2) + dt * oldControls(i,2);
+        oldTraj = [oldTraj; newx1, newx2];
+        prev = [newx1, newx2];
     end
     %%%%%%%
     
@@ -147,36 +167,22 @@ while ((norm(deriv)) > epsilon) & iters < 1000
     
     %%% Update ergodic measure
     ergodicMeasure = getErgodicMeasure()
+    ergodicities = [ergodicities, ergodicMeasure];
     cost = costJ()
     deriv = derivOfCost()
-    
-    
-    
-    
+    normControlPerturbations = norm([transpose(vs); transpose(zs)]);
     
 end
 
-
-%plot(T_t(:,1), T_t(:,2)); %%%%%%%%%%%%%%%%%%%%%% Plotting like x = rows, y = cols
 plot(trajectory(:,1), trajectory(:,2),".");
 title("Trajectory for hw5 problem 1");
-%xlim([-1 5]); 
-%ylim([-1 5]);
 xlabel("x");
 ylabel("y");
-%hold on;
-%plot(T_t(1,1), T_t(1,2),'.r','MarkerSize',40);
-%plot(doorLocation(1), doorLocation(2),'.b','MarkerSize',40);
-%hold off;
-
 
 %%%% Functions
 
 function lita = getLittlea()
     global controls ergodicMeasure qRegularization times R zs vs trajectory gammaKs K allHs;
-    %[t, x] = ode45(@(t,x) [0 1; -1 -b]*x, linspace(0,T,T+1), x0);%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    %t = times;
-    %trajectory = x;
     
     sumSoFar = 0;
     
@@ -189,13 +195,6 @@ function lita = getLittlea()
             h = allHs(xk+1, yk+1); % getHK(ks);
             %
             fkx = getFkx(trajectory, ks, h);
-            %
-            ck = getCks(fkx);
-            %
-            phik = getPhik(ks, h);
-            %
-            %phik = getPhik(fkx);
-            %
             termWithoutZ = getDFkxZWithoutZ(fkx, zs);
             sumSoFar = sumSoFar + gammaIJ * termWithoutZ;
         end
@@ -206,17 +205,11 @@ end
 
 function zterm = getDFkxZWithoutZ(fkx, z)
     global T dt;
-    %fun = @(t) fkx(t);
-    %ck = integral(fun, 1, T/dt+1); %0;%(1/T) *
-    %ck = (1/T) * [sum(fkx(1,:)) ; sum(fkx(2,:))];
     zterm = (1/T) * (fkx);%(1,:));
 end
 
 function zterm = getDFkxZ(fkx, z)
     global T dt;
-    %fun = @(t) fkx(t);
-    %ck = integral(fun, 1, T/dt+1); %0;%(1/T) *
-    %ck = (1/T) * [sum(fkx(1,:)) ; sum(fkx(2,:))];
     zterm = (1/T) * sum(fkx * transpose(z));%(1,:));
 end
 
@@ -236,10 +229,6 @@ end
 
 function de = derivOfErg()
     global controls ergodicMeasure qRegularization times R zs vs trajectory gammaKs K allHs;
-    %[t, x] = ode45(@(t,x) [0 1; -1 -b]*x, linspace(0,T,T+1), x0);%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    %t = times;
-    %trajectory = x;
-    
     sumSoFar = 0;
     
     for xk=0:K
@@ -269,7 +258,7 @@ function d = derivOfCost()
     global controls ergodicMeasure qRegularization timevals R zs vs;
     sumsofar = 0;
     for i=1:(length(timevals))
-        sumsofar = sumsofar + controls(i,:) * R * vs(:,i);
+        sumsofar = sumsofar + controls(i,:) * R * transpose(vs(i,:));
     end
     regularizationTerm = 0.5 * sumsofar;
     dErg = derivOfErg();
@@ -278,51 +267,42 @@ function d = derivOfCost()
 end
 
 function j = costJ()
-    global controls ergodicMeasure qRegularization times R;
+    global controls ergodicMeasure qRegularization times R vs zs Q;
     sumsofar = 0;
     for i=1:(length(times))
         sumsofar = sumsofar + transpose(controls(i,:)) * R * controls(i,:);
     end
     regularizationTerm = 0.5 * sumsofar;
-    j = qRegularization * ergodicMeasure + regularizationTerm;
+    j = qRegularization * ergodicMeasure + regularizationTerm + 0.5*(sum(sum(transpose(zs*Q)*zs)) + sum(sum(transpose(vs*R)*vs)));
 end
 
 function ergodicmeasureval = getErgodicMeasure()
-    global trajectory gammaKs K allHs;
-    %[t, x] = ode45(@(t,x) [0 1; -1 -b]*x, linspace(0,T,T+1), x0);%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    %t = times;
-    %trajectory = x;
-    
+    global trajectory gammaKs K allHs;    
     sumSoFar = 0;
-    
     for xk=0:K
         for yk=0:K
             ks = [xk; yk];
             %
-            gammaIJ = gammaKs(xk+1, yk+1);
+            gammaIJ = gammaKs(xk+1, yk+1)
             %
             h = allHs(xk+1, yk+1); % getHK(ks);
             %
             fkx = getFkx(trajectory, ks, h);
             %
-            ck = getCks(fkx);
+            ck = getCks(fkx)
             %
-            phik = getPhik(ks, h);
+            phik = getPhik(ks, h)
             %
             %phik = getPhik(fkx);
-            sumSoFar = sumSoFar + gammaIJ * (norm(ck - phik))^2;
+            sumSoFar = sumSoFar + gammaIJ * (norm(ck - phik))^2
         end
     end
     
     ergodicmeasureval = sumSoFar;
 end
 
-function pkx = getPhik(ks, hk)%(fkx)
+function pkx = getPhik(ks, hk)
     global phix rowres colres L;
-    %phix;
-    %fkx;
-    %pkx = sum(phix) * transpose(fkx);
-    
     sumsofar = 0;
     drow = L / rowres;
     dcol = L / colres;
@@ -335,7 +315,7 @@ function pkx = getPhik(ks, hk)%(fkx)
         end
     end
     
-    pkx = phix(ks(1)+1, ks(2)+1)*sumsofar;%/(colres*rowres);
+    pkx = phix(ks(1)+1, ks(2)+1)*sumsofar;
 end
 
 function ck = getCks(fkx)
@@ -349,15 +329,10 @@ end
 
 function fkx = getFkx(x, k, h)
     global L
-    1;
-    %h = allHs(ks(1),ks(2)); % getHK(k);
-    %L = 1;%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%????????????????????????????/
-    res = [];
     normalizer = 1/h;
     resi = normalizer * 1;
-    
-    x1part = cos(k(1) * pi * x(1,:) / L);
-    x2part = cos(k(2) * pi * x(2,:) / L);
+    x1part = cos(k(1) * pi * x(:,1) / L);
+    x2part = cos(k(2) * pi * x(:,2) / L);
     tot = resi * (x1part .* x2part);
     fkx = tot;
 end
@@ -366,6 +341,18 @@ function hk = getHK(ks)
     global L 
     fun = @(x1,x2) (cos(ks(1) * pi * x1 / L).^2).*((cos(ks(2) * pi * x2 / L)).^2);
     hk = sqrt(integral2(fun, 0, L, 0, L));
+end
+
+function hs = hsInit()
+    global K;
+    allHs = [];
+    for xk=0:K
+        for yk=0:K
+            ks = [xk; yk];
+            allHs(xk+1,yk+1) = getHK(ks);
+        end
+    end
+    hs = allHs;
 end
 
 function g = getGammaKiKj(i, j) 
@@ -379,7 +366,14 @@ function phi_x = phi()
   global sigma mu L K;
   newk = K + 1;
   xval = [linspace(0, L, newk); linspace(0, L, newk)];
-  phi_x = (1/(sqrt(det(2*pi*sigma))))*exp(-0.5*transpose(xval-mu)*inv(sigma)*(xval-mu));
+  phimat = zeros(newk, newk);
+  for i=1:newk
+      for j=1:newk
+          xval = [i*L/newk; j*L/newk];
+          phimat(i, j) = ((det(2*pi*sigma))^(-0.5))*exp(-0.5*transpose(xval-transpose(mu))*inv(sigma)*(xval-transpose(mu)));
+      end
+  end
+  phi_x = phimat;%((det(2*pi*sigma))^(-0.5))*exp(-0.5*transpose(xval-transpose(mu))*inv(sigma)*(xval-transpose(mu)));
 end
 
 
@@ -387,25 +381,6 @@ end
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%
-
-function norm = normOfRowVect(vectVal)
-  % this is of the form [[x1,.....,xn]] * transpose([[x1,....,xn]]);
-  norm = vectVal * transpose(vectVal);
-end
-
-function norm = matrixNorm(matrix, nrows)
-  % norm of natrix with n rows
-  sumval = 0;
-  for i = 1:nrows
-      sumval = sumval + normOfRowVect(matrix(i,:));
-  end
-  norm = sumval;
-end
-
-%%%
 
 function pdot = solvepval(t, P, Q, R, As, Bs, xs, us)
   global N T;
@@ -415,96 +390,56 @@ function pdot = solvepval(t, P, Q, R, As, Bs, xs, us)
   B = Bs(:,:,index);
   
   P = reshape(P, size(A));
-  pdot = -1*transpose(A)*P - P*A + P*B*(inv(R))*(transpose(B))*P - Q;
+  pdot = transpose(A)*P - P*A + P*B*(inv(R))*(transpose(B))*P - Q;
   pdot = pdot(:);
 end
 
 function rdot = solverval(t, r, P, R, Q, As, Bs, xs, us)
-  global xdest N T littlea;
+  global N T littlea littleb;
   index = round((t/T)*(N-1)+1);
   
-  xs = transpose(xs);
   us = transpose(us);
-  
-  newx1 = xs(1,index);
-  newx2 = xs(2,index);
-  %newx3 = xs(3,index);
-  newu1 = us(1,index);
-  newu2 = us(2,index);
-  
-  xdestcols1 = xdest(1,index);
-  xdestcols2 = xdest(2,index);
-  %xdestcols3 = xdest(3,index);
-  xdestcolsToUse = [xdestcols1; xdestcols2];%; xdestcols3];
   
   A = As(:,:,index);
   B = Bs(:,:,index);
-  
-  littlea;% = transpose(getLittlea());%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%transpose(transpose([newx1; newx2]-xdestcolsToUse) * Q);
-  littleb = transpose(transpose([newu1; newu2]) * R);
+
   Pval = P(index,:);
-  newP = [Pval(1:2); Pval(3:4)];%[Pval(1:3); Pval(4:6); Pval(7:9)];
+  newP = [Pval(1:2); Pval(3:4)];
   
-  rdot = -1*transpose(A - B * inv(R) * transpose(B) * newP)*r - littlea + newP * B * (inv(R)) * littleb;
+  rdot = -1*transpose(A - B * inv(R) * transpose(B) * newP)*r - littlea + newP * B * (inv(R)) * littleb(:,index);
   rdot = rdot(:);
   
 end
 
 function zdot = getZdot(t, z, P, R, Q, As, Bs, xs, us, rs, littleA)
-  global xdest N T trajectory littlea;
+  global xdest N T trajectory littlea littleb;
   index = round((t/T)*(N-1)+1);
-  xs = transpose(xs);
-  us = transpose(us);
   A = As(:,:,index);
   B = Bs(:,:,index);
-  newx1 = xs(1,index);
-  newx2 = xs(2,index);
-  %newx3 = xs(3,index);
-  newu1 = us(1,index);
-  newu2 = us(2,index);
   newr1 = rs(index,1);
   newr2 = rs(index,2);
-  %newr3 = rs(index,3); 
-  xdestcols1 = xdest(1,index);
-  xdestcols2 = xdest(2,index);
-  %xdestcols3 = xdest(3,index);
-  xdestcolsToUse = [xdestcols1; xdestcols2];% xdestcols3];
-  littlea;% = getLittlea();%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%transpose(transpose([newx1; newx2] - xdestcolsToUse) * Q);%; newx3]-xdestcolsToUse) * Q);
-  littleb = transpose(transpose([newu1; newu2]) * R);
   Pval = P(index,:);
-  newP = [Pval(1:2); Pval(3:4)];%[Pval(1:3); Pval(4:6); Pval(7:9)];
-  rval = [newr1, newr2];%[newr1; newr2; newr3];
+  newP = [Pval(1:2); Pval(3:4)];
+  rval = [newr1, newr2];
   
-  zdot = A * z + B * (-1 * inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * transpose(rval) - inv(R) * littleb);
+  zdot = A * z + B * (inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * transpose(rval) - inv(R) * littleb(:,index));
 end
 
 function v = getV(R, As, Bs, P, zs, rs, xs, us, Q)
-  global T N xdest littlea;
+  global T N xdest littlea littleb;
   vs = [];
-  xs = transpose(xs);
   us = transpose(us);
   for i=1:length(rs)
-    A = As(:,:,i);
     B = Bs(:,:,i);
     Pval = P(i,:);
-    %newP = [Pval(1:3); Pval(4:6); Pval(7:9)];
     newP = [Pval(1:2); Pval(3:4)];
-    newx1 = xs(1,i);
-    newx2 = xs(2,i);
-    %newx3 = xs(3,i);
     newu1 = us(1,i);
     newu2 = us(2,i);
-    xdestcols1 = xdest(1,i);
-    xdestcols2 = xdest(2,i);
-    %xdestcols3 = xdest(3,i);
-    xdestcolsToUse = [xdestcols1; xdestcols2];% xdestcols3];
-    littlea;% = getLittlea();%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%transpose(transpose([newx1; newx2]-xdestcolsToUse) * Q);% newx3]-xdestcolsToUse) * Q);
-    littleb = transpose(transpose([newu1; newu2]) * R);
     z = transpose(zs(i,:));
     rval = transpose(rs(i,:));
-    vs(:,i) = -1 * inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * rval - inv(R) * littleb;
+    vs(:,i) = inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * rval - inv(R) * littleb(:,i);
   end
-  v = vs;%-1 * inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * rval - inv(R) * b;
+  v = transpose(vs);
 end
 
 %%%
@@ -517,18 +452,4 @@ end
 function Bmatv = Bmat(x, u, index)
   % D_2(f(x,u))
   Bmatv = [1 0; 0 1];%[cos(x(3,index)) 0; sin(x(3,index)) 0; 0 1];
-end
-
-function xvectdot = Fvectdot(x, u, index)
-  xvectdot = [cos(x(3, index)) * u(1, index); sin(x(3, index)) * u(1, index); u(2, index)];
-end
-
-function xvectdot = Fsinglevectdot(x, u)
-  xvectdot = [cos(x(3)) * u(1); sin(x(3)) * u(1); u(2)];
-end
-
-function xdest = Fdest(i)
-  global dtval;
-
-  xdest = [dtval * 2 * i / pi; 0; pi/2];
 end
