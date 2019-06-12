@@ -3,7 +3,7 @@ clear;
 
 %%%%
 global T x0 epsilon resolution dt sigma mu L K rowres colres gammaKs R qRegularization controls ergodicMeasure;
-global phik trajectory deriv phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals;
+global phik trajectory deriv phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals littlea littleb;
 %%%%
 
 i = 0;
@@ -58,7 +58,8 @@ for ki=0:K
 end
 phix = phi();
 ergodicMeasure = getErgodicMeasure()
-cost = costJ();ergodicMeasure = getErgodicMeasure();
+cost = costJ();
+ergodicMeasure = getErgodicMeasure();
 deriv = 10;%derivOfCost() %10; % initialize dj(eta_i) dot zeta_i
 
 %%%% Main loop
@@ -75,7 +76,7 @@ while ((norm(deriv)) > epsilon) & iters < 100
       Bt = Bmat(trajectory, controls, i);
       Bmats(:,:,i) = Bt;
     end
-    
+    littlea = transpose(getLittlea());
     %%% Calculate P
     [TP, P] = ode45(@(t,P)solvepval(t, P, Q, R, Amats, Bmats, trajectory, controls), linspace(T,0,T/dt), P1);
     tmpP = P((T/dt),:);
@@ -88,11 +89,11 @@ while ((norm(deriv)) > epsilon) & iters < 100
     %%% Calculate z
     x0valForZdot = [0; 0;];% 0];%[trajectory(1,1); trajectory(2,1); trajectory(3,1)];
     [Tz, z] = ode45(@(t,z)getZdot(t, z, flip(P), R, Q, Amats, Bmats, trajectory, controls, flip(r)), linspace(0,T,T/dt), x0valForZdot);
-    %zs = z;
+    zs = z;
     
     %%% Calculate v
-    v = getV(R, Amats, Bmats, flip(P), z, flip(r), trajectory, controls, Q);
-    %vs = v;
+    v = getV(R, Amats, Bmats, flip(P), z, flip(r), trajectory, controls, Q)
+    vs = v;
     
     %%% armijo
     
@@ -101,14 +102,28 @@ while ((norm(deriv)) > epsilon) & iters < 100
     %%% armijo: while cost of current cols is more than cost of taking step
     
     %%% UPDATES to trajectory and controls
-    trajectory = trajectory;
-    controls = controls;
+    
+    %%%%%%%
+    %temporary
+    gamma = 0.5;
+    oldControls = controls * gamma;
+    oldTraj = [];
+    prev = x0;
+    for i=1:(T/dt)
+        oldTraj = [oldTraj; prev(1) + dt * oldControls(i,1), prev(2) + dt * oldControls(i,2)];
+        prev = [prev(1) + dt * u1_init, prev(2) + dt * u2_init];
+    end
+    %%%%%%%
+    
+    trajectory = oldTraj;
+    controls = oldControls;
     
     %%% Update counter
     iters = iters + 1
     
     %%% Update ergodic measure
-    ergodicMeasure = getErgodicMeasure();
+    ergodicMeasure = getErgodicMeasure()
+    deriv = derivOfCost()
     
     
     
@@ -121,6 +136,46 @@ end
 
 
 %%%% Functions
+
+function lita = getLittlea()
+    global controls ergodicMeasure qRegularization times R zs vs trajectory gammaKs K;
+    %[t, x] = ode45(@(t,x) [0 1; -1 -b]*x, linspace(0,T,T+1), x0);%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %t = times;
+    %trajectory = x;
+    
+    sumSoFar = 0;
+    
+    for xk=0:K
+        for yk=0:K
+            ks = [xk; yk];
+            %
+            gammaIJ = gammaKs(xk+1, yk+1);
+            %
+            h = getHK(ks);
+            %
+            fkx = getFkx(trajectory, ks, h);
+            %
+            ck = getCks(fkx);
+            %
+            phik = getPhik(ks, h);
+            %
+            %phik = getPhik(fkx);
+            %
+            termWithoutZ = getDFkxZWithoutZ(fkx, zs);
+            sumSoFar = sumSoFar + gammaIJ * termWithoutZ;
+        end
+    end
+    de = 2*sumSoFar;
+    lita = de;
+end
+
+function zterm = getDFkxZWithoutZ(fkx, z)
+    global T dt;
+    %fun = @(t) fkx(t);
+    %ck = integral(fun, 1, T/dt+1); %0;%(1/T) *
+    %ck = (1/T) * [sum(fkx(1,:)) ; sum(fkx(2,:))];
+    zterm = (1/T) * (fkx);%(1,:));
+end
 
 function zterm = getDFkxZ(fkx, z)
     global T dt;
@@ -179,7 +234,7 @@ function d = derivOfCost()
     global controls ergodicMeasure qRegularization timevals R zs vs;
     sumsofar = 0;
     for i=1:(length(timevals))
-        sumsofar = sumsofar + controls(i,:) * R * transpose(vs(i,:));
+        sumsofar = sumsofar + controls(i,:) * R * vs(:,i);
     end
     regularizationTerm = 0.5 * sumsofar;
     dErg = derivOfErg();
@@ -330,7 +385,7 @@ function pdot = solvepval(t, P, Q, R, As, Bs, xs, us)
 end
 
 function rdot = solverval(t, r, P, R, Q, As, Bs, xs, us)
-  global xdest N T;
+  global xdest N T littlea;
   index = round((t/T)*(N-1)+1);
   
   xs = transpose(xs);
@@ -350,18 +405,18 @@ function rdot = solverval(t, r, P, R, Q, As, Bs, xs, us)
   A = As(:,:,index);
   B = Bs(:,:,index);
   
-  a = transpose(transpose([newx1; newx2]-xdestcolsToUse) * Q);
-  b = transpose(transpose([newu1; newu2]) * R);
+  littlea;% = transpose(getLittlea());%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%transpose(transpose([newx1; newx2]-xdestcolsToUse) * Q);
+  littleb = transpose(transpose([newu1; newu2]) * R);
   Pval = P(index,:);
   newP = [Pval(1:2); Pval(3:4)];%[Pval(1:3); Pval(4:6); Pval(7:9)];
   
-  rdot = -1*transpose(A - B * inv(R) * transpose(B) * newP)*r - a + newP * B * (inv(R)) * b;
+  rdot = -1*transpose(A - B * inv(R) * transpose(B) * newP)*r - littlea + newP * B * (inv(R)) * littleb;
   rdot = rdot(:);
   
 end
 
-function zdot = getZdot(t, z, P, R, Q, As, Bs, xs, us, rs)
-  global xdest N T trajectory;
+function zdot = getZdot(t, z, P, R, Q, As, Bs, xs, us, rs, littleA)
+  global xdest N T trajectory littlea;
   index = round((t/T)*(N-1)+1);
   xs = transpose(xs);
   us = transpose(us);
@@ -379,17 +434,17 @@ function zdot = getZdot(t, z, P, R, Q, As, Bs, xs, us, rs)
   xdestcols2 = xdest(2,index);
   %xdestcols3 = xdest(3,index);
   xdestcolsToUse = [xdestcols1; xdestcols2];% xdestcols3];
-  a = transpose(transpose([newx1; newx2] - xdestcolsToUse) * Q);%; newx3]-xdestcolsToUse) * Q);
-  b = transpose(transpose([newu1; newu2]) * R);
+  littlea;% = getLittlea();%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%transpose(transpose([newx1; newx2] - xdestcolsToUse) * Q);%; newx3]-xdestcolsToUse) * Q);
+  littleb = transpose(transpose([newu1; newu2]) * R);
   Pval = P(index,:);
   newP = [Pval(1:2); Pval(3:4)];%[Pval(1:3); Pval(4:6); Pval(7:9)];
   rval = [newr1, newr2];%[newr1; newr2; newr3];
   
-  zdot = A * z + B * (-1 * inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * transpose(rval) - inv(R) * b);
+  zdot = A * z + B * (-1 * inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * transpose(rval) - inv(R) * littleb);
 end
 
 function v = getV(R, As, Bs, P, zs, rs, xs, us, Q)
-  global T N xdest;
+  global T N xdest littlea;
   vs = [];
   xs = transpose(xs);
   us = transpose(us);
@@ -408,11 +463,11 @@ function v = getV(R, As, Bs, P, zs, rs, xs, us, Q)
     xdestcols2 = xdest(2,i);
     %xdestcols3 = xdest(3,i);
     xdestcolsToUse = [xdestcols1; xdestcols2];% xdestcols3];
-    a = transpose(transpose([newx1; newx2]-xdestcolsToUse) * Q);% newx3]-xdestcolsToUse) * Q);
-    b = transpose(transpose([newu1; newu2]) * R);
+    littlea;% = getLittlea();%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%transpose(transpose([newx1; newx2]-xdestcolsToUse) * Q);% newx3]-xdestcolsToUse) * Q);
+    littleb = transpose(transpose([newu1; newu2]) * R);
     z = transpose(zs(i,:));
     rval = transpose(rs(i,:));
-    vs(:,i) = -1 * inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * rval - inv(R) * b;
+    vs(:,i) = -1 * inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * rval - inv(R) * littleb;
   end
   v = vs;%-1 * inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * rval - inv(R) * b;
 end
