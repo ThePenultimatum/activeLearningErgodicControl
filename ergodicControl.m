@@ -3,16 +3,28 @@ clear;
 
 %%%%
 global T x0 epsilon resolution dt sigma mu L K rowres colres gammaKs R qRegularization controls ergodicMeasure;
-global phik trajectory deriv phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals littlea littleb;
+global phik trajectory deriv phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals littlea littleb allHs;
 %%%%
 
 i = 0;
 T = 10;
 %x0 = [0; 1];
 x0 = [1; 2];
-u1_init = 1;
-u2_init = 0.1;
+u1_init = 0.001;
+u2_init = 0.001;
 initCondsVect = [1; 2; 1; 0.1];
+
+
+allHs = [];
+    
+for xk=0:K
+    for yk=0:K
+        ks = [xk; yk];
+        allHs(xk+1,yk+1) = getHK(ks);
+    end
+end
+
+
 resolution = 1;
 dt = 1/resolution;
 N = T/dt;
@@ -32,8 +44,8 @@ for i=1:(T/dt)
     zs = [zs; 0, 0];
     vs = [vs; 0, 0];
     timevals(i) = dt * i;
-    xdest(:,i) = Fdest(i);
 end
+xdest = transpose(trajectory);
 epsilon = 0.1;
 R = [1 0; 0 1];
 Q = [1 0; 0 1];
@@ -61,12 +73,14 @@ ergodicMeasure = getErgodicMeasure()
 cost = costJ();
 ergodicMeasure = getErgodicMeasure();
 deriv = 10;%derivOfCost() %10; % initialize dj(eta_i) dot zeta_i
+alpha = 0.4;
+beta = 0.7;
 
 %%%% Main loop
 
 iters = 0;
 
-while ((norm(deriv)) > epsilon) & iters < 100
+while ((norm(deriv)) > epsilon) & iters < 1000
     
     
     %%% calculate  A and B matrices
@@ -92,21 +106,31 @@ while ((norm(deriv)) > epsilon) & iters < 100
     zs = z;
     
     %%% Calculate v
-    v = getV(R, Amats, Bmats, flip(P), z, flip(r), trajectory, controls, Q)
+    v = getV(R, Amats, Bmats, flip(P), z, flip(r), trajectory, controls, Q);
     vs = v;
     
     %%% armijo
     
     %%% setup armijo initial conditions
-    
+    jnew = 9999999;
+    jinit = cost;
+    beta  = 0.7;
+    alpha = 0.4;
+    armijocount = 0;
     %%% armijo: while cost of current cols is more than cost of taking step
+    %while (_ - _ < _ & armijocount < armijomax)
+    %    beta = 0.7 ^ armijocount;
+    %    armijocount = armijocount + 1;
+    %end
     
     %%% UPDATES to trajectory and controls
     
+    
+    
     %%%%%%%
     %temporary
-    gamma = 0.5;
-    oldControls = controls * gamma;
+    gamma = 0.01;
+    oldControls = controls + transpose(v) * gamma;
     oldTraj = [];
     prev = x0;
     for i=1:(T/dt)
@@ -123,6 +147,7 @@ while ((norm(deriv)) > epsilon) & iters < 100
     
     %%% Update ergodic measure
     ergodicMeasure = getErgodicMeasure()
+    cost = costJ()
     deriv = derivOfCost()
     
     
@@ -132,13 +157,23 @@ while ((norm(deriv)) > epsilon) & iters < 100
 end
 
 
-
+%plot(T_t(:,1), T_t(:,2)); %%%%%%%%%%%%%%%%%%%%%% Plotting like x = rows, y = cols
+plot(trajectory(:,1), trajectory(:,2),".");
+title("Trajectory for hw5 problem 1");
+%xlim([-1 5]); 
+%ylim([-1 5]);
+xlabel("x");
+ylabel("y");
+%hold on;
+%plot(T_t(1,1), T_t(1,2),'.r','MarkerSize',40);
+%plot(doorLocation(1), doorLocation(2),'.b','MarkerSize',40);
+%hold off;
 
 
 %%%% Functions
 
 function lita = getLittlea()
-    global controls ergodicMeasure qRegularization times R zs vs trajectory gammaKs K;
+    global controls ergodicMeasure qRegularization times R zs vs trajectory gammaKs K allHs;
     %[t, x] = ode45(@(t,x) [0 1; -1 -b]*x, linspace(0,T,T+1), x0);%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %t = times;
     %trajectory = x;
@@ -151,7 +186,7 @@ function lita = getLittlea()
             %
             gammaIJ = gammaKs(xk+1, yk+1);
             %
-            h = getHK(ks);
+            h = allHs(xk+1, yk+1); % getHK(ks);
             %
             fkx = getFkx(trajectory, ks, h);
             %
@@ -200,7 +235,7 @@ function dfkx = getDFkx(x, k, h)
 end
 
 function de = derivOfErg()
-    global controls ergodicMeasure qRegularization times R zs vs trajectory gammaKs K;
+    global controls ergodicMeasure qRegularization times R zs vs trajectory gammaKs K allHs;
     %[t, x] = ode45(@(t,x) [0 1; -1 -b]*x, linspace(0,T,T+1), x0);%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %t = times;
     %trajectory = x;
@@ -213,7 +248,7 @@ function de = derivOfErg()
             %
             gammaIJ = gammaKs(xk+1, yk+1);
             %
-            h = getHK(ks);
+            h = allHs(xk+1, yk+1); % getHK(ks);
             %
             fkx = getFkx(trajectory, ks, h);
             %
@@ -253,7 +288,7 @@ function j = costJ()
 end
 
 function ergodicmeasureval = getErgodicMeasure()
-    global trajectory gammaKs K;
+    global trajectory gammaKs K allHs;
     %[t, x] = ode45(@(t,x) [0 1; -1 -b]*x, linspace(0,T,T+1), x0);%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %t = times;
     %trajectory = x;
@@ -266,7 +301,7 @@ function ergodicmeasureval = getErgodicMeasure()
             %
             gammaIJ = gammaKs(xk+1, yk+1);
             %
-            h = getHK(ks);
+            h = allHs(xk+1, yk+1); % getHK(ks);
             %
             fkx = getFkx(trajectory, ks, h);
             %
@@ -315,7 +350,7 @@ end
 function fkx = getFkx(x, k, h)
     global L
     1;
-    %h = getHK(k);
+    %h = allHs(ks(1),ks(2)); % getHK(k);
     %L = 1;%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%????????????????????????????/
     res = [];
     normalizer = 1/h;
