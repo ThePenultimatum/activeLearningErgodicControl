@@ -140,7 +140,7 @@ function dfkx = getDFkx(x, k, h)
     x2partDx1 = cos(k(2) * pi * x(2,:) / L);
     x1partDx2 = cos(k(1) * pi * x(1,:) / L);
     x2partDx2 = -sin(k(2) * pi * x(2,:) / L);
-    tot = resi * ((x1partDx1 .* x2partDx1) + (x1partDx2 .* x2partDx2));
+    tot = resi * pi * (1/L) * (k(1) * (x1partDx1 .* x2partDx1) + k(2) * (x1partDx2 .* x2partDx2));
     fkx = tot;
 end
 
