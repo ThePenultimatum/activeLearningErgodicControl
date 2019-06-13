@@ -11,8 +11,8 @@ T = 10;
 x1_init = 0.1;
 x2_init = 0.1;
 x0 = [x1_init; x2_init];
-u1_init = 0.1;
-u2_init = 0.01;
+u1_init = 0.09;
+u2_init = 0.03;
 initCondsVect = [x1_init; x1_init; u1_init; u2_init];
 %%%%
 
@@ -29,7 +29,7 @@ L = 4;
 qRegularization = 1;
 rowres = 10;
 colres = 10;
-gammaKs = [];
+gammaKs = zeros(K,K);
 for ki=0:K
     for kj=0:K
         newone = getGammaKiKj(ki, kj);
@@ -37,9 +37,9 @@ for ki=0:K
     end
 end
 %%% ERGODICITY prior normal distribution inits
-sigma = [0.15 0; 0 0.15];
+sigma = [0.5 0; 0 0.5];
 invSigma = inv(sigma);
-mu = [0.2, 0.17];%[1; 1];%0;
+mu = [0.65, 0.2];%[1; 1];%0;
 phix = phi();
 %%%
 ergodicMeasure = getErgodicMeasure();
@@ -49,33 +49,29 @@ ergodicMeasure = getErgodicMeasure();
 R = [0.01 0; 0 0.01];
 invR = inv(R);
 Q = [1 0; 0 1];
-P1 = [1 0; 0 1];
-Amats = [];
-Bmats = [];
+P1 = [0 0; 0 0];
+Amats = zeros(2,2,T/dt);
+Bmats = zeros(2,2,T/dt);
 epsilon = 0.1;
 %%%%
 
 %%%% Controls, trajectory, desired trajectory, and perturbation inits
-controls = [];
-trajectory = [];
-timevals = [];
-zs = [];
-vs = [];
+controls = zeros(T/dt+1,2);
+trajectory = zeros(T/dt+1,2);
+timevals = zeros(1,T/dt+1);
+zs = zeros(T/dt+1,2);
+vs = zeros(T/dt+1,2);
 z0 = [0; 0];
 v0 = [0; 0];
 prev = x0;
-controls = [controls; u1_init, u2_init];
-trajectory = [trajectory; prev(1), prev(2)];
+controls(1,:) = [u1_init, u2_init];
+trajectory(1,:) = [prev(1), prev(2)];
 xdest = transpose(trajectory);
-zs = [zs; 0, 0];
-vs = [vs; 0, 0];
 timevals(1) = 0;
 for i=1:(T/dt)
-    controls = [controls; u1_init, u2_init];
-    trajectory = [trajectory; prev(1) + dt * u1_init, prev(2) + dt * u2_init];
+    controls(i+1,:) = [u1_init, u2_init];
+    trajectory(i+1,:) = [prev(1) + dt * u1_init, prev(2) + dt * u2_init];
     prev = [prev(1) + dt * u1_init, prev(2) + dt * u2_init];
-    zs = [zs; 0, 0];
-    vs = [vs; 0, 0];
     timevals(i+1) = dt * i;
 end
 %%%%
@@ -100,33 +96,33 @@ iters = 0;
 ergodicities = [];
 costs = [];
 
-while (normControlPerturbations > epsilon) & iters < maxILQRIters
+while (normControlPerturbations > epsilon) && (iters < maxILQRIters)
     
     %%%% Calculate descent direction
     %%% calculate  A and B matrices
     for i=1:(T/dt)
-      At = Amat(trajectory, controls, i);
+      At = Amat();
       Amats(:,:,i) = At;
-      Bt = Bmat(trajectory, controls, i);
+      Bt = Bmat();
       Bmats(:,:,i) = Bt;
     end
     %%% calculate a(t) and b(t)
     littlea = transpose(getLittlea());
     littleb = transpose(controls * R);
     %%% Calculate P
-    [TP, P] = ode45(@(t,P)solvepval(t, P, Q, R, Amats, Bmats, flip(trajectory), flip(controls)), linspace(T,0,T/dt), P1);
+    [TP, P] = ode45(@(t,P)solvepval(t, P, Q, Amats, Bmats), linspace(T,0,T/dt), P1);
     tmpP = P((T/dt),:);
     %%% Calculate r0 and r
     r0 = [tmpP(1,1:2); tmpP(1,3:4)] * z0;
-    [Tr, r] = ode45(@(t,r)solverval(t, r, P, R, Q, Amats, Bmats, flip(trajectory), flip(controls)), linspace(T,0,T/dt), r0);
+    [Tr, r] = ode45(@(t,r)solverval(t, r, P, Amats, Bmats), linspace(T,0,T/dt), r0);
     
     %%% Calculate z
     x0valForZdot = [0; 0];
-    [Tz, z] = ode45(@(t,z)getZdot(t, z, flip(P), R, Q, Amats, Bmats, trajectory, controls, flip(r)), linspace(0,T,T/dt), x0valForZdot);
+    [Tz, z] = ode45(@(t,z)getZdot(t, z, flip(P), Amats, Bmats, flip(r)), linspace(0,T,T/dt), x0valForZdot);
     zs = [z; 0, 0];
     
     %%% Calculate v
-    v = getV(R, Amats, Bmats, flip(P), zs, flip(r), trajectory, controls, Q);
+    v = getV(Bmats, flip(P), zs, flip(r));
     vs = [v; 0, 0];
     
     %%% armijo
@@ -151,13 +147,13 @@ while (normControlPerturbations > epsilon) & iters < maxILQRIters
     %temporary
     gamma = 0.001;
     oldControls = controls + vs * gamma;
-    oldTraj = [];
+    oldTraj = zeros(T/dt+1,2);
     prev = x0;
-    oldTraj = [oldTraj; prev(1), prev(2)];
+    oldTraj(1,:) = [prev(1), prev(2)];
     for i=1:(T/dt)
         newx1 = prev(1) + dt * oldControls(i,1);
         newx2 = prev(2) + dt * oldControls(i,2);
-        oldTraj = [oldTraj; newx1, newx2];
+        oldTraj(i+1,:) = [newx1, newx2];
         prev = [newx1, newx2];
     end
     %%%%%%%
@@ -171,7 +167,7 @@ while (normControlPerturbations > epsilon) & iters < maxILQRIters
     %%% Update ergodic measure
     ergodicMeasure = getErgodicMeasure();
     ergodicities = [ergodicities, ergodicMeasure];
-    cost = costJ()
+    cost = costJ();
     costs = [costs, cost];
     %deriv = derivOfCost();
     normControlPerturbations = norm([transpose(vs); transpose(zs)])
@@ -186,7 +182,7 @@ ylabel("y");
 %%%% Functions
 
 function lita = getLittlea()
-    global controls ergodicMeasure qRegularization times R zs vs trajectory gammaKs K allHs T;
+    global trajectory gammaKs K allHs T;
     
     sumSoFar = 0;
     
@@ -222,14 +218,8 @@ function zterm = getDFkxZWithoutZ(fkx)
     zterm = (1/T) * (fkx);%(1,:));
 end
 
-function zterm = getDFkxZ(fkx, z)
-    global T dt;
-    zterm = (1/T) * sum(fkx * transpose(z));%(1,:));
-end
-
 function dfkx = getDFkx(x, k, h)
     global L;
-    res = [];
     normalizer = 1/h;
     resi = normalizer * 1;
     x1partDx1 = -sin(k(1) * pi * x(:,1) / L);
@@ -238,47 +228,7 @@ function dfkx = getDFkx(x, k, h)
     x2partDx2 = -sin(k(2) * pi * x(:,2) / L);
     %tot = resi * pi * (1/L) * (k(1) * (x1partDx1 .* x2partDx1) + k(2) * (x1partDx2 .* x2partDx2));
     tot = resi * pi * (1/L) * (k(1) * [transpose(x1partDx1) * x2partDx1; transpose(x1partDx2) * x2partDx2]);
-    tot;
     dfkx = tot;
-end
-
-function de = derivOfErg()
-    global controls ergodicMeasure qRegularization times R zs vs trajectory gammaKs K allHs;
-    sumSoFar = 0;
-    
-    for xk=0:K
-        for yk=0:K
-            ks = [xk; yk];
-            %
-            gammaIJ = gammaKs(xk+1, yk+1);
-            %
-            h = allHs(xk+1, yk+1); % getHK(ks);
-            %
-            fkx = getFkx(trajectory, ks, h);
-            %
-            ck = getCks(fkx);
-            %
-            phik = getPhik(ks, h);
-            %
-            %phik = getPhik(fkx);
-            %
-            termWithZ = getDFkxZ(fkx, zs);
-            sumSoFar = sumSoFar + gammaIJ * (ck - phik) * termWithZ;
-        end
-    end
-    de = 2*sumSoFar;
-end
-
-function d = derivOfCost()
-    global controls ergodicMeasure qRegularization timevals R zs vs;
-    sumsofar = 0;
-    for i=1:(length(timevals))
-        sumsofar = sumsofar + controls(i,:) * R * transpose(vs(i,:));
-    end
-    regularizationTerm = 0.5 * sumsofar;
-    dErg = derivOfErg();
-    dj = qRegularization * dErg + regularizationTerm;
-    d = dj;
 end
 
 function j = costJ()
@@ -317,7 +267,7 @@ function ergodicmeasureval = getErgodicMeasure()
 end
 
 function pkx = getPhik(ks, hk)
-    global phix rowres colres L K;
+    global phix L K;
     sumsofar = 0;
     drow = L / K;%rowres;
     dcol = L / K;%colres;
@@ -335,9 +285,8 @@ function pkx = getPhik(ks, hk)
 end
 
 function ck = getCks(fkx)
-    global T dt;
-    fkx;
-    ck = (1/T) * sum(fkx);%(1,:));
+    global T;
+    ck = (1/T) * sum(fkx);
 end
 
 function fkx = getFkx(x, k, h)
@@ -358,7 +307,7 @@ end
 
 function hs = hsInit()
     global K;
-    allHs = [];
+    allHs = zeros(K, K);
     for xk=0:K
         for yk=0:K
             ks = [xk; yk];
@@ -378,7 +327,6 @@ end
 function phi_x = phi()
   global sigma mu L K invSigma;
   newk = K + 1;
-  xval = [linspace(0, L, newk); linspace(0, L, newk)];
   phimat = zeros(newk, newk);
   for i=1:newk
       for j=1:newk
@@ -395,10 +343,9 @@ end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-function pdot = solvepval(t, P, Q, R, As, Bs, xs, us)
+function pdot = solvepval(t, P, Q, As, Bs)
   global N T invR;
   index = round((t/T)*(N-1)+1);
-  P;
   A = As(:,:,index);
   B = Bs(:,:,index);
   
@@ -407,11 +354,9 @@ function pdot = solvepval(t, P, Q, R, As, Bs, xs, us)
   pdot = pdot(:);
 end
 
-function rdot = solverval(t, r, P, R, Q, As, Bs, xs, us)
+function rdot = solverval(t, r, P, As, Bs)
   global N T littlea littleb invR;
   index = round((t/T)*(N-1)+1);
-  
-  us = transpose(us);
   
   A = As(:,:,index);
   B = Bs(:,:,index);
@@ -425,8 +370,8 @@ function rdot = solverval(t, r, P, R, Q, As, Bs, xs, us)
   
 end
 
-function zdot = getZdot(t, z, P, R, Q, As, Bs, xs, us, rs, littleA)
-  global xdest N T trajectory littlea littleb invR;
+function zdot = getZdot(t, z, P, As, Bs, rs)
+  global N T littleb invR;
   index = round((t/T)*(N-1)+1);
   A = As(:,:,index);
   B = Bs(:,:,index);
@@ -439,16 +384,13 @@ function zdot = getZdot(t, z, P, R, Q, As, Bs, xs, us, rs, littleA)
   zdot = A * z + B * (-invR * transpose(B) * newP * z - invR * transpose(B) * transpose(rval) - invR * littleb(:,index));
 end
 
-function v = getV(R, As, Bs, P, zs, rs, xs, us, Q)
-  global T N xdest littlea littleb invR;
-  vs = [];
-  us = transpose(us);
+function v = getV(Bs, P, zs, rs)
+  global littleb invR;
+  vs = zeros(2,length(rs));
   for i=1:length(rs)
     B = Bs(:,:,i);
     Pval = P(i,:);
     newP = [Pval(1:2); Pval(3:4)];
-    newu1 = us(1,i);
-    newu2 = us(2,i);
     z = transpose(zs(i,:));
     rval = transpose(rs(i,:));
     vs(:,i) = invR * transpose(B) * newP * z - invR * transpose(B) * rval - invR * littleb(:,i);
@@ -458,12 +400,61 @@ end
 
 %%%
 
-function Amatv = Amat(x, u, index)
+function Amatv = Amat()
   % D_1(f(x,u))
-  Amatv = [0 0; 0 0];%[0 0 -sin(x(3,index))*u(1,index); 0 0 cos(x(3,index))*u(1,index); 0 0 0];
+  Amatv = [0 0; 0 0];
 end
 
-function Bmatv = Bmat(x, u, index)
+function Bmatv = Bmat()
   % D_2(f(x,u))
-  Bmatv = [1 0; 0 1];%[cos(x(3,index)) 0; sin(x(3,index)) 0; 0 1];
+  Bmatv = [1 0; 0 1];
 end
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%function de = derivOfErg()
+%    global zs trajectory gammaKs K allHs;
+%    sumSoFar = 0;
+%    
+%    for xk=0:K
+%        for yk=0:K
+%            ks = [xk; yk];
+%
+%            gammaIJ = gammaKs(xk+1, yk+1);
+%            %
+%            h = allHs(xk+1, yk+1); % getHK(ks);
+%            %
+%            fkx = getFkx(trajectory, ks, h);
+%            %
+%            ck = getCks(fkx);
+%            %
+%            phik = getPhik(ks, h);
+%            %
+%            %phik = getPhik(fkx);
+%            %
+%            termWithZ = getDFkxZ(fkx, zs);
+%            sumSoFar = sumSoFar + gammaIJ * (ck - phik) * termWithZ;
+%        end
+%    end
+%    de = 2*sumSoFar;
+%end
+
+
+%function zterm = getDFkxZ(fkx, z)
+%    global T;
+%    zterm = (1/T) * sum(fkx * transpose(z));%(1,:));
+%end
+
+%function d = derivOfCost()
+%    global controls qRegularization timevals R vs;
+%    sumsofar = 0;
+%    for i=1:(length(timevals))
+%        sumsofar = sumsofar + controls(i,:) * R * transpose(vs(i,:));
+%    end
+%    regularizationTerm = 0.5 * sumsofar;
+%    dErg = derivOfErg();
+%    dj = qRegularization * dErg + regularizationTerm;
+%    d = dj;
+%end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
