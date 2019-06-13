@@ -97,7 +97,7 @@ gamma = 0.01; %%%% default small step instead of Armijo
 iters = 0;
 ergodicities = [];
 
-while (normControlPerturbations > epsilon) & iters < 0%maxILQRIters
+while (normControlPerturbations > epsilon) & iters < 10 %maxILQRIters
     
     %%%% Calculate descent direction
     %%% calculate  A and B matrices
@@ -166,11 +166,11 @@ while (normControlPerturbations > epsilon) & iters < 0%maxILQRIters
     iters = iters + 1
     
     %%% Update ergodic measure
-    ergodicMeasure = getErgodicMeasure()
+    ergodicMeasure = getErgodicMeasure();
     ergodicities = [ergodicities, ergodicMeasure];
-    cost = costJ()
-    deriv = derivOfCost()
-    normControlPerturbations = norm([transpose(vs); transpose(zs)]);
+    cost = costJ();
+    %deriv = derivOfCost();
+    normControlPerturbations = norm([transpose(vs); transpose(zs)])
     
 end
 
@@ -192,10 +192,11 @@ function lita = getLittlea()
             %
             gammaIJ = gammaKs(xk+1, yk+1);
             %
-            h = allHs(xk+1, yk+1); % getHK(ks);
+            h = allHs(xk+1, yk+1); % getHK(ks)
             %
-            fkx = getFkx(trajectory, ks, h);
-            termWithoutZ = getDFkxZWithoutZ(fkx, zs);
+            %fkx = getFkx(trajectory, ks, h)
+            Dfkx = getDFkx(trajectory, ks, h);
+            termWithoutZ = getDFkxZWithoutZ(Dfkx);%, zs)
             sumSoFar = sumSoFar + gammaIJ * termWithoutZ;
         end
     end
@@ -203,8 +204,8 @@ function lita = getLittlea()
     lita = de;
 end
 
-function zterm = getDFkxZWithoutZ(fkx, z)
-    global T dt;
+function zterm = getDFkxZWithoutZ(fkx)
+    global T;
     zterm = (1/T) * (fkx);%(1,:));
 end
 
@@ -218,13 +219,14 @@ function dfkx = getDFkx(x, k, h)
     res = [];
     normalizer = 1/h;
     resi = normalizer * 1;
-    
-    x1partDx1 = -sin(k(1) * pi * x(1,:) / L);
-    x2partDx1 = cos(k(2) * pi * x(2,:) / L);
-    x1partDx2 = cos(k(1) * pi * x(1,:) / L);
-    x2partDx2 = -sin(k(2) * pi * x(2,:) / L);
-    tot = resi * pi * (1/L) * (k(1) * (x1partDx1 .* x2partDx1) + k(2) * (x1partDx2 .* x2partDx2));
-    fkx = tot;
+    x1partDx1 = -sin(k(1) * pi * x(:,1) / L);
+    x2partDx1 = cos(k(2) * pi * x(:,2) / L);
+    x1partDx2 = cos(k(1) * pi * x(:,1) / L);
+    x2partDx2 = -sin(k(2) * pi * x(:,2) / L);
+    %tot = resi * pi * (1/L) * (k(1) * (x1partDx1 .* x2partDx1) + k(2) * (x1partDx2 .* x2partDx2));
+    tot = resi * pi * (1/L) * (k(1) * [transpose(x1partDx1) * x2partDx1; transpose(x1partDx2) * x2partDx2]);
+    tot;
+    dfkx = tot;
 end
 
 function de = derivOfErg()
@@ -283,18 +285,18 @@ function ergodicmeasureval = getErgodicMeasure()
         for yk=0:K
             ks = [xk; yk];
             %
-            gammaIJ = gammaKs(xk+1, yk+1)
+            gammaIJ = gammaKs(xk+1, yk+1);
             %
             h = allHs(xk+1, yk+1); % getHK(ks);
             %
             fkx = getFkx(trajectory, ks, h);
             %
-            ck = getCks(fkx)
+            ck = getCks(fkx);
             %
-            phik = getPhik(ks, h)
+            phik = getPhik(ks, h);
             %
             %phik = getPhik(fkx);
-            sumSoFar = sumSoFar + gammaIJ * (norm(ck - phik))^2
+            sumSoFar = sumSoFar + gammaIJ * (norm(ck - phik))^2;
         end
     end
     
@@ -321,9 +323,6 @@ end
 function ck = getCks(fkx)
     global T dt;
     fkx;
-    %fun = @(t) fkx(t);
-    %ck = integral(fun, 1, T/dt+1); %0;%(1/T) *
-    %ck = (1/T) * [sum(fkx(1,:)) ; sum(fkx(2,:))];
     ck = (1/T) * sum(fkx);%(1,:));
 end
 
@@ -406,7 +405,7 @@ function rdot = solverval(t, r, P, R, Q, As, Bs, xs, us)
   Pval = P(index,:);
   newP = [Pval(1:2); Pval(3:4)];
   
-  rdot = -1*transpose(A - B * inv(R) * transpose(B) * newP)*r - littlea + newP * B * (inv(R)) * littleb(:,index);
+  rdot = -1*transpose(A - B * inv(R) * transpose(B) * newP)*r - transpose(littlea) + newP * B * (inv(R)) * littleb(:,index);
   rdot = rdot(:);
   
 end
@@ -422,7 +421,7 @@ function zdot = getZdot(t, z, P, R, Q, As, Bs, xs, us, rs, littleA)
   newP = [Pval(1:2); Pval(3:4)];
   rval = [newr1, newr2];
   
-  zdot = A * z + B * (inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * transpose(rval) - inv(R) * littleb(:,index));
+  zdot = A * z + B * (-inv(R) * transpose(B) * newP * z - inv(R) * transpose(B) * transpose(rval) - inv(R) * littleb(:,index));
 end
 
 function v = getV(R, As, Bs, P, zs, rs, xs, us, Q)
