@@ -7,7 +7,7 @@ global trajectory phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals little
 %%%%
 
 %%%% Inits for all parts
-T = 10;
+T = 100;
 x1_init = 0.1;
 x2_init = 0.1;
 x0 = [x1_init; x2_init];
@@ -24,8 +24,8 @@ N = T/dt;
 
 %%%% Inits for ERGODICITY calculations
 K = 10;
-allHs = hsInit();
 L = 4;
+allHs = hsInit();
 qRegularization = 1;
 rowres = 10;
 colres = 10;
@@ -41,12 +41,10 @@ sigma = [0.5 0; 0 0.5];
 invSigma = inv(sigma);
 mu = [0.65, 0.2];%[1; 1];%0;
 phix = phi();
-%%%
-ergodicMeasure = getErgodicMeasure();
 %%%%
 
 %%%% Inits for ILQR
-R = [0.01 0; 0 0.01];
+R = [0.1 0; 0 0.01];
 invR = inv(R);
 Q = [1 0; 0 1];
 P1 = [0 0; 0 0];
@@ -95,8 +93,10 @@ gamma = 0.01; %%%% default small step instead of Armijo
 iters = 0;
 ergodicities = [];
 costs = [];
+%%%
+ergodicMeasure = getErgodicMeasure();
 
-while (normControlPerturbations > epsilon) && (iters < maxILQRIters)
+while (normControlPerturbations > epsilon) && (iters < 80)%maxILQRIters)
     
     %%%% Calculate descent direction
     %%% calculate  A and B matrices
@@ -172,6 +172,13 @@ while (normControlPerturbations > epsilon) && (iters < maxILQRIters)
     %deriv = derivOfCost();
     normControlPerturbations = norm([transpose(vs); transpose(zs)])
     
+    djval = 0;
+    for i=1:N
+        djval = djval + littlea(:,i)'*zs(i,:)' + controls(i,:)*R*vs(i,:)'*dt;
+    end
+
+    djval
+    
 end
 
 plot(trajectory(:,1), trajectory(:,2),".");
@@ -200,16 +207,16 @@ function lita = getLittlea()
             %
             phik = getPhik(ks, h);
             %
-            termWithZ = ck - phik;
+            termCareNotZ = ((1/T) * ck) - phik;
             %
             Dfkx = getDFkx(trajectory, ks, h);
             %
             termWithoutZ = getDFkxZWithoutZ(Dfkx);
             
-            sumSoFar = sumSoFar + gammaIJ * termWithZ * termWithoutZ;
+            sumSoFar = sumSoFar + gammaIJ * (2/T) * termCareNotZ * termWithoutZ;
         end
     end
-    de = (2/T)*sumSoFar;
+    de = sumSoFar;
     lita = de;
 end
 
@@ -226,8 +233,9 @@ function dfkx = getDFkx(x, k, h)
     x2partDx1 = cos(k(2) * pi * x(:,2) / L);
     x1partDx2 = cos(k(1) * pi * x(:,1) / L);
     x2partDx2 = -sin(k(2) * pi * x(:,2) / L);
-    %tot = resi * pi * (1/L) * (k(1) * (x1partDx1 .* x2partDx1) + k(2) * (x1partDx2 .* x2partDx2));
-    tot = resi * pi * (1/L) * (k(1) * [transpose(x1partDx1) * x2partDx1; transpose(x1partDx2) * x2partDx2]);
+    %tot = resi * pi * (1/L) * (k(1) * (x1partDx1 .* x2partDx1) + k(2) * (x1partDx2 .* x2partDx2))
+    %tot = resi * pi * (1/L) * (k(1) * [transpose(x1partDx1) * x2partDx1; transpose(x1partDx2) * x2partDx2]);
+    tot = resi * pi * (1/L) * [k(1) * (x1partDx1 .* x2partDx1), k(2) * (x1partDx2 .* x2partDx2)];
     dfkx = tot;
 end
 
@@ -364,7 +372,8 @@ function rdot = solverval(t, r, P, As, Bs)
   Pval = P(index,:);
   newP = [Pval(1:2); Pval(3:4)];
   
-  rdot = -1*transpose(A - B * invR * transpose(B) * newP)*r - transpose(littlea) + newP * B * (invR) * littleb(:,index);
+  %rdot = -1*transpose(A - B * invR * transpose(B) * newP)*r - transpose(littlea) + newP * B * (invR) * littleb(:,index);
+  rdot = -1*transpose(A - B * invR * transpose(B) * newP)*r - littlea(:,index) + newP * B * (invR) * littleb(:,index);
   
   rdot = rdot(:);
   
