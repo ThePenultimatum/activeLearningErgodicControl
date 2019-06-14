@@ -7,7 +7,7 @@ global trajectory phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals little
 %%%%
 
 %%%% Inits for all parts
-T = 10;
+T = 100;
 x1_init = 1;
 x2_init = 0;
 x0 = [x1_init; x2_init];
@@ -167,12 +167,12 @@ while (normControlPerturbations > epsilon) && (iters < 200)%maxILQRIters)
     iters = iters + 1
     
     %%% Update ergodic measure
-    ergodicMeasure = getErgodicMeasure();
-    ergodicities = [ergodicities, ergodicMeasure];
-    cost = costJ();
-    costs = [costs, cost];
+    %ergodicMeasure = getErgodicMeasure();
+    %ergodicities = [ergodicities, ergodicMeasure];
+    %cost = costJ();
+    %costs = [costs, cost];
     %deriv = derivOfCost();
-    normControlPerturbations = norm([transpose(vs); transpose(zs)])
+    %normControlPerturbations = norm([transpose(vs); transpose(zs)])
     
     djval = 0;
     for i=1:N
@@ -191,35 +191,41 @@ ylabel("y");
 %%%% Functions
 
 function lita = getLittlea()
-    global trajectory gammaKs K allHs T phik;
+    global trajectory gammaKs K allHs T phik N L;
+    lita = zeros(N,2);
     
-    sumSoFar = 0;
-    
-    for xk=0:K
-        for yk=0:K
-            ks = [xk; yk];
-            %
-            gammaIJ = gammaKs(xk+1, yk+1);
-            %
-            h = allHs(xk+1, yk+1); % getHK(ks)
-            %
-            fkx = getFkx(trajectory, ks, h);
-            %
-            ck = getCks(fkx);
-            %
-            phikval = phik(xk+1,yk+1);%getPhik(ks, h);
-            %
-            termCareNotZ = ((1/T) * ck) - phikval;
-            %
-            Dfkx = getDFkx(trajectory, ks, h);
-            %
-            termWithoutZ = getDFkxZWithoutZ(Dfkx);
-            
-            sumSoFar = sumSoFar + gammaIJ * (2/T) * termCareNotZ * termWithoutZ;
+    cks = zeros(K,K);
+    for i=1:K
+        for j=1:K
+            cks(i,j) = (1/allHs(i,j))*(transpose(cos(pi * i * trajectory(:,1) / L)) * (cos( pi * j * trajectory(:,2) / L)));
         end
     end
-    de = sumSoFar;
-    lita = de;
+    
+    for iterx=1:N+1
+        x1sumsofar = zeros(K,K);
+        x2sumsofar = zeros(K,K);
+        for xk=0:K-1
+            for yk=0:K-1
+                ks = [xk; yk];
+                %
+                gammaIJ = gammaKs(xk+1, yk+1);
+                %
+                h = allHs(xk+1, yk+1); % getHK(ks)
+                %
+                x1partDx1 = -sin(ks(1) * pi * trajectory(iterx,1) / L);
+                x2partDx1 = cos(ks(2) * pi * trajectory(iterx,2) / L);
+                x1partDx2 = cos(ks(1) * pi * trajectory(iterx,1) / L);
+                x2partDx2 = -sin(ks(2) * pi * trajectory(iterx,2) / L);
+                val1 = pi * (1/L) * [ks(1) * (x1partDx1 .* x2partDx1), ks(2) * (x1partDx2 .* x2partDx2)];
+                val2 = (2/T) * gammaIJ * (cks(xk+1,yk+1) - phik(xk+1,yk+1)) * val1;
+                x1sumsofar(xk+1,yk+1) = val2(1);
+                x2sumsofar(xk+1,yk+1) = val2(2);                
+            end
+        end
+        lita(iterx,1) = sum(sum(x1sumsofar));
+        lita(iterx,2) = sum(sum(x2sumsofar));
+    end
+    lita = lita;
 end
 
 function zterm = getDFkxZWithoutZ(fkx)
@@ -231,6 +237,7 @@ function dfkx = getDFkx(x, k, h)
     global L;
     normalizer = 1/h;
     resi = normalizer * 1;
+    
     x1partDx1 = -sin(k(1) * pi * x(:,1) / L);
     x2partDx1 = cos(k(2) * pi * x(:,2) / L);
     x1partDx2 = cos(k(1) * pi * x(:,1) / L);
