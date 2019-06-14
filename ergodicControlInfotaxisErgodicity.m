@@ -2,14 +2,14 @@ clear;
 
 
 %%%% Globals
-global T x0 epsilon resolution dt sigma mu L K rowres colres gammaKs R qRegularization controls ergodicMeasure;
+global T x0 epsilon resolution dt sigma mu L K rowres colres gammaKs R qRegularization controls ergodicMeasure mu2;
 global trajectory phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals littlea littleb allHs invR invSigma phik;
 %%%%
 
 %%%% Inits for all parts
 T = 10;
-x1_init = 1;
-x2_init = 0;
+x1_init = 0.1;
+x2_init = 0.25;
 x0 = [x1_init; x2_init];
 u1_init = 0.001;
 u2_init = 0.001;
@@ -17,14 +17,14 @@ initCondsVect = [x1_init; x1_init; u1_init; u2_init];
 %%%%
 
 %%%% Timing inits
-resolution = 10;
+resolution = 5;
 dt = 1/resolution;
 N = T/dt;
 %%%%
 
 %%%% Inits for ERGODICITY calculations
 K = 10;
-L = 2;
+L = 4;
 allHs = hsInit();
 qRegularization = 1;
 rowres = 10;
@@ -39,13 +39,14 @@ end
 %%% ERGODICITY prior normal distribution inits
 sigma = [1 0; 0 1];
 invSigma = inv(sigma);
-mu = [0 0];%[1; 1];%0;
+mu = [0.23 0.56];%[1; 1];%0;
+mu2 = [0.44 0.12];
 phix = phi();
 phik = getPhikAll();
 %%%%
 
 %%%% Inits for ILQR
-R = [0.1 0; 0 0.01];
+R = [0.1 0; 0 0.1];
 invR = inv(R);
 Q = [1 0; 0 1];
 P1 = [0 0; 0 0];
@@ -97,7 +98,7 @@ costs = [];
 %%%
 ergodicMeasure = getErgodicMeasure();
 
-while (normControlPerturbations > epsilon) && (iters < 200)%maxILQRIters)
+while (normControlPerturbations > epsilon) && (iters < 400)%maxILQRIters)
     
     %%%% Calculate descent direction
     %%% calculate  A and B matrices
@@ -147,7 +148,7 @@ while (normControlPerturbations > epsilon) && (iters < 200)%maxILQRIters)
     
     %%%%%%%
     %temporary
-    gamma = 0.001;
+    gamma = 0.01;
     oldControls = controls + vs * gamma;
     oldTraj = zeros(T/dt+1,2);
     prev = x0;
@@ -184,20 +185,24 @@ while (normControlPerturbations > epsilon) && (iters < 200)%maxILQRIters)
 end
 
 plot(trajectory(:,1), trajectory(:,2),".");
-title("Trajectory for hw5 problem 1");
+title("Trajectory for hw5 problem 2");
 xlabel("x");
 ylabel("y");
+hold on;
+plot(mu(1), mu(2),'.b','MarkerSize',40);
+plot(mu2(1), mu2(2),'.b','MarkerSize',40);
+hold off;
 
 %%%% Functions
 
 function lita = getLittlea()
-    global trajectory gammaKs K allHs T phik N L;
+    global trajectory gammaKs K allHs T phik N L dt;
     lita = zeros(N,2);
     
     cks = zeros(K,K);
     for i=1:K
         for j=1:K
-            cks(i,j) = (1/allHs(i,j))*(transpose(cos(pi * i * trajectory(:,1) / L)) * (cos( pi * j * trajectory(:,2) / L)));
+            cks(i,j) = dt * (1/allHs(i,j))*(transpose(cos(pi * i * trajectory(:,1) / L)) * (cos( pi * j * trajectory(:,2) / L)));
         end
     end
     
@@ -288,11 +293,12 @@ function pkx = getPhik(ks, hk)
     sumsofar = 0;
     drow = L / K;%rowres;
     dcol = L / K;%colres;
+    pioverL = pi / L;
     for a=0:(K-1)%(rowres+1)
         for b=0:(K-1)%(colres+1)
             drowab = drow * a;
             dcolab = dcol * b;
-            elem = (1/hk)*cos(ks(1)*pi*drowab/L) * cos(ks(2)*pi*dcolab/L);
+            elem = (1/hk)*cos(ks(1)*pi*drowab/L) * cos(ks(2)*pioverL*dcolab);
             %sumsofar = sumsofar + elem;
             sumsofar = sumsofar + phix(a+1, b+1) * elem;
         end
@@ -316,7 +322,7 @@ function pkx = getPhikAll()
                     dcolab = dcol * m;
                     hk = allHs(i+1,j+1);
                     fk = (1/hk)*cos(ks(1)*pi*drowab/L) * cos(ks(2)*pi*dcolab/L);
-                    phival = phix(l+1,m+1);
+                    phival = phix(i+1,j+1);
                     sumsofar = sumsofar + fk * phival;
                 end
             end
@@ -367,16 +373,23 @@ function g = getGammaKiKj(i, j)
 end
 
 function phi_x = phi()
-  global sigma mu L K invSigma;
+  global sigma mu L K invSigma mu2;
   newk = K + 1;
   phimat = zeros(newk, newk);
+  phimat2 = zeros(newk, newk);
   for i=1:newk
       for j=1:newk
           xval = [i*L/newk; j*L/newk];
           phimat(i, j) = ((det(2*pi*sigma))^(-0.5))*exp(-0.5*transpose(xval-transpose(mu))*invSigma*(xval-transpose(mu)));
       end
   end
-  phi_x = phimat;%((det(2*pi*sigma))^(-0.5))*exp(-0.5*transpose(xval-transpose(mu))*inv(sigma)*(xval-transpose(mu)));
+  for i=1:newk
+      for j=1:newk
+          xval = [i*L/newk; j*L/newk];
+          phimat(i, j) = ((det(2*pi*sigma))^(-0.5))*exp(-0.5*transpose(xval-transpose(mu2))*invSigma*(xval-transpose(mu2)));
+      end
+  end
+  phi_x = (phimat + phimat2)/(norm(phimat + phimat2));%((det(2*pi*sigma))^(-0.5))*exp(-0.5*transpose(xval-transpose(mu))*inv(sigma)*(xval-transpose(mu)));
 end
 
 
@@ -452,52 +465,3 @@ function Bmatv = Bmat()
   % D_2(f(x,u))
   Bmatv = [1 0; 0 1];
 end
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%
-%function de = derivOfErg()
-%    global zs trajectory gammaKs K allHs;
-%    sumSoFar = 0;
-%    
-%    for xk=0:K
-%        for yk=0:K
-%            ks = [xk; yk];
-%
-%            gammaIJ = gammaKs(xk+1, yk+1);
-%            %
-%            h = allHs(xk+1, yk+1); % getHK(ks);
-%            %
-%            fkx = getFkx(trajectory, ks, h);
-%            %
-%            ck = getCks(fkx);
-%            %
-%            phik = getPhik(ks, h);
-%            %
-%            %phik = getPhik(fkx);
-%            %
-%            termWithZ = getDFkxZ(fkx, zs);
-%            sumSoFar = sumSoFar + gammaIJ * (ck - phik) * termWithZ;
-%        end
-%    end
-%    de = 2*sumSoFar;
-%end
-
-
-%function zterm = getDFkxZ(fkx, z)
-%    global T;
-%    zterm = (1/T) * sum(fkx * transpose(z));%(1,:));
-%end
-
-%function d = derivOfCost()
-%    global controls qRegularization timevals R vs;
-%    sumsofar = 0;
-%    for i=1:(length(timevals))
-%        sumsofar = sumsofar + controls(i,:) * R * transpose(vs(i,:));
-%    end
-%    regularizationTerm = 0.5 * sumsofar;
-%    dErg = derivOfErg();
-%    dj = qRegularization * dErg + regularizationTerm;
-%    d = dj;
-%end
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

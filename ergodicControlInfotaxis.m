@@ -1,11 +1,12 @@
 clear;
-global mapMat measurementLocation doorLocation numUniqueVisited totalSpaces entropy epsilonEntropy T_t prior posterior iters valsAtPos visited;
+global mapMat measurementLocation doorLocation doorLocation2 numUniqueVisited totalSpaces entropy epsilonEntropy T_t prior posterior iters valsAtPos visited;
 mapMat = [];
 totalSpaces = 25*25;
 prior = ones(25,25) / totalSpaces;
 posterior = ones(25,25) / totalSpaces;
 measurementLocation = [round(rand()*24)+1 round(rand()*24)+1];
 doorLocation = [round(rand() * 24)+1 round(rand() * 24)+1];
+doorLocation2 = [round(rand() * 24)+1 round(rand() * 24)+1];
 numUniqueVisited = 0;
 epsilonEntropy = 0.1;
 
@@ -85,6 +86,7 @@ ylabel("y");
 hold on;
 plot(T_t(1,1), T_t(1,2),'.r','MarkerSize',40);
 plot(doorLocation(1), doorLocation(2),'.b','MarkerSize',40);
+plot(doorLocation2(1), doorLocation2(2),'.b','MarkerSize',40);
 hold off;
 
 %%%%%%%%%%%%%%%%%%%%%%% FUNCTIONS
@@ -262,8 +264,8 @@ function s = entropyOfBoard(b)
 end
 
 function x = takeMeasurement()
-  global measurementLocation doorLocation;
-  if ((measurementLocation(1) == doorLocation(1)) && (measurementLocation(2) == doorLocation(2)))
+  global measurementLocation doorLocation doorLocation2;
+  if ((measurementLocation(1) == doorLocation(1)) && (measurementLocation(2) == doorLocation(2))) || ((measurementLocation(1) == doorLocation2(1)) && (measurementLocation(2) == doorLocation2(2)))
       x = 1;
   else
       r = rand();
@@ -277,10 +279,13 @@ function x = takeMeasurement()
 end
 
 function l = getLikelihoodDoorMeasurement(r,c)
-    global doorLocation;
+    global doorLocation doorLocation2;
     rowdiff = abs(r - doorLocation(1));
     coldiff = abs(c - doorLocation(2));
+    rowdiff2 = abs(r - doorLocation2(1));
+    coldiff2 = abs(c - doorLocation2(2));    
     diff = coldiff - rowdiff;
+    diff2 = coldiff2 - rowdiff2;
     if ((diff <= 0) && (rowdiff < 4))
         if (rowdiff == 3)
             l = 1/4;
@@ -298,7 +303,25 @@ function l = getLikelihoodDoorMeasurement(r,c)
             end
         end
     else
-        l = 1/100;
+        if ((diff2 <= 0) && (rowdiff2 < 4))
+            if (rowdiff2 == 3)
+                l = 1/4;
+            else
+                if (rowdiff2 == 2)
+                    l = 1/3;
+                else
+                    if (rowdiff2 == 1)
+                        l = 1/2;
+                    else
+                        if (rowdiff2 == 0)
+                            l = 1;
+                        end
+                    end
+                end
+            end
+        else
+            l = 1/100;
+        end
     end
 end
 
