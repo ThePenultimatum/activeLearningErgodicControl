@@ -7,9 +7,9 @@ global trajectory phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals little
 %%%%
 
 %%%% Inits for all parts
-T = 20;
-x1_init = -0.08;
-x2_init = -0.23;
+T = 10;
+x1_init = 1;
+x2_init = 0;
 x0 = [x1_init; x2_init];
 u1_init = 0.001;
 u2_init = 0.001;
