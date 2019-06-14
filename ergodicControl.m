@@ -3,28 +3,28 @@ clear;
 
 %%%% Globals
 global T x0 epsilon resolution dt sigma mu L K rowres colres gammaKs R qRegularization controls ergodicMeasure;
-global trajectory phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals littlea littleb allHs invR invSigma;
+global trajectory phix cost Q P1 Amats Bmats vs zs N z0 v0 xdest timevals littlea littleb allHs invR invSigma phik;
 %%%%
 
 %%%% Inits for all parts
-T = 100;
-x1_init = 0.1;
-x2_init = 0.1;
+T = 20;
+x1_init = -0.08;
+x2_init = -0.23;
 x0 = [x1_init; x2_init];
-u1_init = 0.09;
-u2_init = 0.03;
+u1_init = 0.001;
+u2_init = 0.001;
 initCondsVect = [x1_init; x1_init; u1_init; u2_init];
 %%%%
 
 %%%% Timing inits
-resolution = 1;
+resolution = 10;
 dt = 1/resolution;
 N = T/dt;
 %%%%
 
 %%%% Inits for ERGODICITY calculations
 K = 10;
-L = 4;
+L = 2;
 allHs = hsInit();
 qRegularization = 1;
 rowres = 10;
@@ -37,10 +37,11 @@ for ki=0:K
     end
 end
 %%% ERGODICITY prior normal distribution inits
-sigma = [0.5 0; 0 0.5];
+sigma = [1 0; 0 1];
 invSigma = inv(sigma);
-mu = [0.65, 0.2];%[1; 1];%0;
+mu = [0 0];%[1; 1];%0;
 phix = phi();
+phik = getPhikAll();
 %%%%
 
 %%%% Inits for ILQR
@@ -96,7 +97,7 @@ costs = [];
 %%%
 ergodicMeasure = getErgodicMeasure();
 
-while (normControlPerturbations > epsilon) && (iters < 80)%maxILQRIters)
+while (normControlPerturbations > epsilon) && (iters < 200)%maxILQRIters)
     
     %%%% Calculate descent direction
     %%% calculate  A and B matrices
@@ -113,7 +114,8 @@ while (normControlPerturbations > epsilon) && (iters < 80)%maxILQRIters)
     [TP, P] = ode45(@(t,P)solvepval(t, P, Q, Amats, Bmats), linspace(T,0,T/dt), P1);
     tmpP = P((T/dt),:);
     %%% Calculate r0 and r
-    r0 = [tmpP(1,1:2); tmpP(1,3:4)] * z0;
+    %r0 = [tmpP(1,1:2); tmpP(1,3:4)] * z0;
+    r0 = trajectory(length(trajectory),:) * [tmpP(1,1:2); tmpP(1,3:4)];%z0;
     [Tr, r] = ode45(@(t,r)solverval(t, r, P, Amats, Bmats), linspace(T,0,T/dt), r0);
     
     %%% Calculate z
@@ -189,7 +191,7 @@ ylabel("y");
 %%%% Functions
 
 function lita = getLittlea()
-    global trajectory gammaKs K allHs T;
+    global trajectory gammaKs K allHs T phik;
     
     sumSoFar = 0;
     
@@ -205,9 +207,9 @@ function lita = getLittlea()
             %
             ck = getCks(fkx);
             %
-            phik = getPhik(ks, h);
+            phikval = phik(xk+1,yk+1);%getPhik(ks, h);
             %
-            termCareNotZ = ((1/T) * ck) - phik;
+            termCareNotZ = ((1/T) * ck) - phikval;
             %
             Dfkx = getDFkx(trajectory, ks, h);
             %
@@ -264,10 +266,10 @@ function ergodicmeasureval = getErgodicMeasure()
             %
             ck = getCks(fkx);
             %
-            phik = getPhik(ks, h);
+            phikval = getPhik(ks, h);
             %
             %phik = getPhik(fkx);
-            sumSoFar = sumSoFar + gammaIJ * (norm(ck - phik))^2;
+            sumSoFar = sumSoFar + gammaIJ * (norm(ck - phikval))^2;
         end
     end
     
@@ -290,6 +292,31 @@ function pkx = getPhik(ks, hk)
     end
     
     pkx = sumsofar;%phix(ks(1)+1, ks(2)+1) * sumsofar;
+end
+
+function pkx = getPhikAll()
+    global phix L K allHs resolution;
+    drow = L / resolution;%rowres;
+    dcol = L / resolution;%colres;
+    phikvals = zeros(K,K);
+    for i=0:K
+        for j=0:K
+            sumsofar = 0;
+            for l=0:resolution
+                for m=0:resolution
+                    ks = [i, j];
+                    drowab = drow * l;
+                    dcolab = dcol * m;
+                    hk = allHs(i+1,j+1);
+                    fk = (1/hk)*cos(ks(1)*pi*drowab/L) * cos(ks(2)*pi*dcolab/L);
+                    phival = phix(l+1,m+1);
+                    sumsofar = sumsofar + fk * phival;
+                end
+            end
+            phikvals(i+1,j+1) = sumsofar * resolution^2;
+        end
+    end
+    pkx = phikvals;
 end
 
 function ck = getCks(fkx)
@@ -369,8 +396,8 @@ function rdot = solverval(t, r, P, As, Bs)
   A = As(:,:,index);
   B = Bs(:,:,index);
 
-  Pval = P(index,:);
-  newP = [Pval(1:2); Pval(3:4)];
+  Pval = P(N+1-index,:);
+  newP = transpose([Pval(1:2); Pval(3:4)]);
   
   %rdot = -1*transpose(A - B * invR * transpose(B) * newP)*r - transpose(littlea) + newP * B * (invR) * littleb(:,index);
   rdot = -1*transpose(A - B * invR * transpose(B) * newP)*r - littlea(:,index) + newP * B * (invR) * littleb(:,index);
